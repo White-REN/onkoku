@@ -5,6 +5,7 @@ import shutil
 import json
 
 import paths
+import models_setup
 
 ROOT = paths.RESOURCE_DIR
 
@@ -57,16 +58,49 @@ def get_translation_model():
 # Basic
 # ============================================================
 
-def clean_temp():
-    if TEMP_DIR.exists():
-        shutil.rmtree(TEMP_DIR)
+def _spawn_llama_server(translation_model, device_id):
 
-    TEMP_DIR.mkdir(
-        parents=True,
-        exist_ok=True
+    command = [
+        str(LLAMA_SERVER),
+
+        "-m",
+        str(translation_model),
+
+        "--jinja",
+
+        "--reasoning", "off",
+
+        "-fa",
+        "on",
+
+        "-c",
+        "4096",
+
+        "-np",
+        "1",
+    ]
+
+    # 只有真检测到设备才传 --device / -ngl。写死 Vulkan0 的话，没有 Vulkan
+    # 的机器（纯 CPU，或者只有 CUDA 的机器）会直接起不来。
+    if device_id:
+        command += [
+            "--device", device_id,
+            "-ngl", "all",
+        ]
+
+    return subprocess.Popen(
+        command,
+        cwd=str(LLAMA_SERVER.parent),
+        creationflags=paths.quiet_flags(),
     )
 
+
 def start_llama_server():
+    """拉起 llama-server 并等到 /health 就绪，返回进程。
+
+    优先用检测到的 GPU；GPU 起不来（驱动、显存、后端缺失）就自动退到 CPU。
+    返回值一定是已经能接受请求的进程，调用方不用再等。
+    """
 
     print()
     print("=== 启动本地翻译引擎 ===")
@@ -84,41 +118,59 @@ def start_llama_server():
         f"翻译模型：{translation_model.name}"
     )
 
-    process = subprocess.Popen(
-        [
-            str(LLAMA_SERVER),
+    device = models_setup.detect_device()
 
-            "-m",
-            str(translation_model),
+    attempts = []
 
-            "--device",
-            "Vulkan0",
+    if device:
+        print(
+            f"推理设备：{device['name']}"
+            f"（{device['total_gb']}GB 显存，{device['id']}）"
+        )
+        attempts.append((device["id"], device["name"]))
+    else:
+        print("没有检测到可用的 GPU，使用 CPU 推理")
 
-            "-ngl",
-            "all",
+    # CPU 永远兜底：显存不够、驱动太老、后端没编进去，都能退回来继续跑
+    attempts.append((None, "CPU"))
 
-            "--jinja",
+    last_error = None
 
-            "--reasoning", "off",
+    for index, (device_id, label) in enumerate(attempts):
 
-            "-fa",
-            "on",
+        process = _spawn_llama_server(
+            translation_model,
+            device_id,
+        )
 
-            "-c",
-            "4096",
+        print(
+            f"llama-server PID：{process.pid}（{label}）"
+        )
 
-            "-np",
-            "1",
-        ],
-        cwd=str(LLAMA_SERVER.parent),
-        creationflags=paths.quiet_flags(),
+        try:
+            wait_for_llama_server(process)
+            print(f"本地翻译引擎已就绪（{label}）")
+            return process
+
+        except RuntimeError as exc:
+
+            last_error = exc
+
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+
+            if index + 1 < len(attempts):
+                print(
+                    f"{label} 启动失败：{exc} → 改用 CPU 重试"
+                )
+
+    raise last_error or RuntimeError(
+        "llama-server 启动失败。"
     )
-
-    print(
-        f"llama-server PID：{process.pid}"
-    )
-
-    return process
 
 def wait_for_llama_server(process):
     import time
@@ -185,7 +237,10 @@ def generate_japanese_subtitle(input_video):
     print("       日语字幕生成")
     print("========================================")
 
-    clean_temp()
+    # 不在这里清空 temp：转录是逐窗口落盘的，上一次中断的进度就存在里面。
+    # 清掉就等于把断点续传一起清了。换视频的情况由 transcribe.py 里的
+    # job.json 签名兜住——签名对不上会自动作废重来。
+    TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
     srt_file = (
         TEMP_DIR
@@ -284,9 +339,23 @@ def translate_subtitle(input_mkv):
     print("       日中字幕翻译")
     print("========================================")
 
-    clean_temp()
+    # 这里不能清空 temp：中文字幕是逐条追加写的，上一次中断的进度就存在
+    # temp 里，清掉就等于把断点续传一起清了。
+    TEMP_DIR.mkdir(parents=True, exist_ok=True)
+
+    partial = (
+        TEMP_DIR
+        / f"{input_mkv.stem}.zh.srt"
+    )
+
+    if partial.exists() and partial.stat().st_size:
+        print()
+        print("发现上次没翻完的中文字幕，会从中断处继续：")
+        print(partial)
+        print("（想从头翻，删掉这个文件即可）")
 
     llama_process = None
+    ok = False
 
     try:
 
@@ -340,10 +409,6 @@ def translate_subtitle(input_mkv):
             print("=== 第 2 步：启动本地翻译引擎 ===")
 
             llama_process = start_llama_server()
-
-            wait_for_llama_server(
-                llama_process
-            )
 
         else:
 
@@ -445,6 +510,8 @@ def translate_subtitle(input_mkv):
         print("日中双语文件：")
         print(output_file)
 
+        ok = True
+
     finally:
 
         if llama_process is not None:
@@ -471,11 +538,16 @@ def translate_subtitle(input_mkv):
 
             print("本地翻译引擎已关闭")
 
-        if TEMP_DIR.exists():
-            shutil.rmtree(TEMP_DIR)
+        if ok:
+            if TEMP_DIR.exists():
+                shutil.rmtree(TEMP_DIR)
 
-        print()
-        print("临时文件已清理")
+            print()
+            print("临时文件已清理")
+        else:
+            print()
+            print("已保留临时文件，重新运行会接着翻译")
+
         print()
         print("=== 字幕翻译流程完成 ===")
 

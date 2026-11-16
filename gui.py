@@ -1,4 +1,4 @@
-"""Subtitle Tool - desktop UI.
+"""Onkoku - desktop UI.
 
 结构参考 Windows 官方应用（NavigationView + 设置卡片），
 视觉语言保持不变：近黑底、荧光绿强调、等宽字体微标签、方括号编号。
@@ -43,8 +43,8 @@ TRACK = "#262626"
 FONT_UI = "Microsoft YaHei UI"
 FONT_MONO = "Consolas"
 
-APP_TITLE = "Subtitle Tool"
-APP_VERSION = "1.1.0"
+APP_TITLE = "Onkoku"
+APP_VERSION = "1.2.0"
 
 RADIUS = 10       # 卡片
 RADIUS_CTRL = 6   # 控件
@@ -1561,7 +1561,7 @@ class ModelDialog(tk.Toplevel):
 # App
 # ============================================================
 
-class SubtitleTool(tk.Tk):
+class Onkoku(tk.Tk):
 
     def __init__(self):
         super().__init__()
@@ -1578,6 +1578,8 @@ class SubtitleTool(tk.Tk):
 
         self.busy = False
         self.job_name = ""
+        self._process = None
+        self._cancelled = False
 
         self.progress = None
         self.progress_text = None
@@ -1660,10 +1662,10 @@ class SubtitleTool(tk.Tk):
             return
 
         try:
+            # assets/logo.png 是 32×32 的成品图标：窗口 / 任务栏 / 对话框用它，
+            # 左上角品牌位也直接用同一个。不在运行时缩放——PhotoImage 只有
+            # subsample，而 subsample 是点采样，从大图缩下来边缘会锯齿。
             image = tk.PhotoImage(file=str(LOGO_PATH))
-            factor = max(1, round(image.width() / 22))
-            if factor > 1:
-                image = image.subsample(factor, factor)
             self.logo_image = image
             # default=True：后面弹出的对话框（模型提示等）自动继承这个图标，
             # 否则子窗口左上角会是 Tk 默认的羽毛
@@ -1676,8 +1678,16 @@ class SubtitleTool(tk.Tk):
 
     def _on_close(self):
         if self.busy:
-            if not messagebox.askyesno("任务进行中", "当前任务仍在运行，确定要退出吗？"):
+            if not messagebox.askyesno(
+                "任务进行中",
+                "当前任务仍在运行，确定要退出吗？\n\n"
+                "退出会同时结束转录 / 翻译进程，包括正在占用显存的翻译引擎。",
+            ):
                 return
+
+            # 必须连子进程一起收：否则 llama-server 会留在后台占着显存
+            self._cancelled = True
+            paths.kill_tree(self._process.pid if self._process else None)
 
         if self._pump_id is not None:
             try:
@@ -1731,7 +1741,7 @@ class SubtitleTool(tk.Tk):
         brand.pack_propagate(False)
 
         if self.logo_image is not None:
-            tk.Label(brand, image=self.logo_image, bg=SIDEBAR).place(x=20, y=22)
+            tk.Label(brand, image=self.logo_image, bg=SIDEBAR).place(x=18, y=13)
         else:
             tk.Label(
                 brand, text="[ST]", bg=SIDEBAR, fg=ACCENT,
@@ -1739,14 +1749,14 @@ class SubtitleTool(tk.Tk):
             ).place(x=20, y=22)
 
         tk.Label(
-            brand, text="Subtitle Tool", bg=SIDEBAR, fg=TEXT,
-            font=(FONT_UI, 10, "bold"),
-        ).place(x=52, y=14)
+            brand, text="Onkoku", bg=SIDEBAR, fg=TEXT,
+            font=(FONT_UI, 13, "bold"),
+        ).place(x=56, y=8)
 
         tk.Label(
             brand, text="LOCAL PIPELINE", bg=SIDEBAR, fg=TEXT_3,
             font=(FONT_MONO, 7),
-        ).place(x=52, y=34)
+        ).place(x=57, y=35)
 
         nav = tk.Frame(sidebar, bg=SIDEBAR)
         nav.pack(fill="x", pady=(10, 0))
@@ -2308,10 +2318,14 @@ class SubtitleTool(tk.Tk):
         ).pack(side="left")
 
         self.start_pill = Btn(
-            actions, "开始处理", self.start_japanese,
+            actions, "开始处理", self._primary_action,
             style="accent", height=34, padx=22, bg=BG,
         )
         self.start_pill.pack(side="right")
+
+        # 任务进行中切回这一页时，按钮要跟着显示成「取消」
+        if self.busy:
+            self.start_pill.set_text("取消")
 
         self.log_panel = LogPanel(body, "OUTPUT", bg=BG)
         self.log_panel.pack(fill="both", expand=True, pady=(16, 0))
@@ -2519,10 +2533,13 @@ class SubtitleTool(tk.Tk):
         ).pack(side="left")
 
         self.start_pill = Btn(
-            actions, "开始翻译", self.start_translation,
+            actions, "开始翻译", self._primary_action,
             style="accent", height=34, padx=22, bg=BG,
         )
         self.start_pill.pack(side="right")
+
+        if self.busy:
+            self.start_pill.set_text("取消")
 
         self.log_panel = LogPanel(body, "OUTPUT", bg=BG)
         self.log_panel.pack(fill="both", expand=True, pady=(16, 0))
@@ -2899,6 +2916,36 @@ class SubtitleTool(tk.Tk):
         elif self.current_page == "translate":
             self.start_translation()
 
+    def _primary_action(self):
+        """主按钮：空闲时开始，运行中变成取消。"""
+        if self.busy:
+            self._cancel_job()
+            return
+
+        if self.current_page == "japanese":
+            self.start_japanese()
+        elif self.current_page == "translate":
+            self.start_translation()
+
+    def _cancel_job(self):
+        if not self.busy or self._cancelled:
+            return
+
+        self._cancelled = True
+
+        self._log("")
+        self._log("=== 正在取消 ===")
+
+        if self._alive(self.start_pill):
+            self.start_pill.set_state("disabled")
+            self.start_pill.set_text("取消中…")
+
+        # 杀进程树：main.py 底下还有 llama-server / whisper-cli / ffmpeg
+        pid = self._process.pid if self._process is not None else None
+        threading.Thread(
+            target=paths.kill_tree, args=(pid,), daemon=True,
+        ).start()
+
     def _guard_start(self):
         if self.busy:
             messagebox.showwarning(
@@ -2917,8 +2964,15 @@ class SubtitleTool(tk.Tk):
         self.busy = True
         self.job_name = name
         self._active_log = self.log_panel
+        self._cancelled = False
+        self._process = None
 
         self.status.set("running")
+
+        if self._alive(self.start_pill):
+            self.start_pill.set_state("normal")
+            self.start_pill.set_text("取消")
+
         self._log("")
         self._log(">>> " + " ".join(str(part) for part in command[1:]))
 
@@ -2951,6 +3005,12 @@ class SubtitleTool(tk.Tk):
                 env=env,
             )
 
+            self._process = process
+
+            # 极短的任务可能在 _cancel_job 之后才走到这里，补一刀
+            if self._cancelled:
+                paths.kill_tree(process.pid)
+
             if process.stdout is not None:
                 for raw in process.stdout:
                     line = raw.rstrip()
@@ -2967,20 +3027,48 @@ class SubtitleTool(tk.Tk):
 
             code = process.wait()
 
+            if self._cancelled:
+                self._ui(lambda: self._job_done(False, "", cancelled=True))
+                return
+
             if code != 0:
                 raise RuntimeError(f"进程退出，代码 {code}")
 
             self._ui(lambda: self._job_done(True, "", ""))
 
         except Exception as exc:
+            if self._cancelled:
+                self._ui(lambda: self._job_done(False, "", cancelled=True))
+                return
+
             # 不把 traceback 甩给用户，挑一句能看懂的原因；
             # 完整堆栈已经逐行进日志区了。
             reason = explain_failure(tail)
             self._ui(lambda: self._job_done(False, reason, ""))
 
-    def _job_done(self, ok, message, detail=""):
+    def _job_done(self, ok, message, detail="", cancelled=False):
         self.busy = False
         self._active_log = None
+        self._process = None
+        self._cancelled = False
+
+        if cancelled:
+            # 用户主动取消：不算错误，不弹框，阶段条退回等待
+            if self.status is not None:
+                self.status.set("ready", "CANCELLED")
+
+            if self._alive(self.start_pill):
+                self.start_pill.set_state("normal")
+                self.start_pill.set_text(
+                    "开始处理" if self.current_page == "japanese" else "开始翻译"
+                )
+
+            self._apply_progress(0, "已取消")
+            self._reset_stages()
+
+            self._log("")
+            self._log("=== 已取消 ===")
+            return
 
         if self.status is not None:
             self.status.set("done" if ok else "error")
@@ -3043,10 +3131,6 @@ class SubtitleTool(tk.Tk):
             messagebox.showwarning("提示", "请先选择视频文件。")
             return
 
-        if self._alive(self.start_pill):
-            self.start_pill.set_state("disabled")
-            self.start_pill.set_text("处理中…")
-
         self._reset_stages()
         self._apply_progress(0, "启动…")
 
@@ -3093,10 +3177,6 @@ class SubtitleTool(tk.Tk):
             messagebox.showwarning("提示", "请先选择日语字幕 MKV。")
             return
 
-        if self._alive(self.start_pill):
-            self.start_pill.set_state("disabled")
-            self.start_pill.set_text("翻译中…")
-
         self._apply_progress(0, "启动…")
 
         self._launch(
@@ -3129,5 +3209,5 @@ class SubtitleTool(tk.Tk):
 
 
 if __name__ == "__main__":
-    app = SubtitleTool()
+    app = Onkoku()
     app.mainloop()

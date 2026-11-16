@@ -324,7 +324,70 @@ def run_whisper(audio_file, output_prefix):
 
 
 # =========================
-# 6. 主程序
+# 6. 断点续传
+# =========================
+
+JOB_FILE = WHISPER_DIR / "job.json"
+
+
+def valid_json(path):
+    """窗口 JSON 是否可用（存在且能解析出 transcription）。"""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+
+    return "transcription" in data
+
+
+def prepare_job(input_video, windows):
+    """判断能不能接着上次的转录结果跑。
+
+    只有「同一个视频 + 同一批窗口」才算能续——窗口是 VAD 算出来的，换个
+    视频或者算法变了，窗口序号对应的音频就不一样了。这种情况下宁可从零
+    重来，也不能把上一个视频的结果拼到这个视频上。
+    """
+    signature = {
+        "input": str(Path(input_video).resolve()),
+        "windows": [list(window) for window in windows],
+    }
+
+    if JOB_FILE.exists():
+
+        try:
+            previous = json.loads(
+                JOB_FILE.read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError):
+            previous = None
+
+        if previous == signature:
+            done = sum(
+                1 for index in range(len(windows))
+                if valid_json(WHISPER_DIR / f"window_{index:03d}.json")
+            )
+
+            if done:
+                print(
+                    f"发现上次的进度：{done}/{len(windows)} 个窗口已转录，接着跑"
+                )
+
+            return True
+
+        # 换视频了（或者窗口划分变了）：旧的窗口产物全部作废
+        for path in WHISPER_DIR.glob("window_*"):
+            path.unlink(missing_ok=True)
+
+    JOB_FILE.write_text(
+        json.dumps(signature, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    return False
+
+
+# =========================
+# 7. 主程序
 # =========================
 
 if __name__ == "__main__":
@@ -433,7 +496,27 @@ if __name__ == "__main__":
         f"{len(windows)} 个窗口 ==="
     )
 
+    resume = prepare_job(input_video, windows)
+
+    skipped = 0
+
     for i, (start, end) in enumerate(windows):
+
+        output_prefix = (
+            WHISPER_DIR /
+            f"window_{i:03d}"
+        )
+
+        # 断点续传：这个窗口上次已经转好了就直接跳过。46 分钟的正片要跑
+        # 近半小时，中途被杀掉再从零开始太亏。
+        if resume and valid_json(Path(str(output_prefix) + ".json")):
+            skipped += 1
+            print(
+                f"[WHISPER_PROGRESS] "
+                f"{i + 1}/{len(windows)}",
+                flush=True
+            )
+            continue
 
         print()
         print(
@@ -450,12 +533,6 @@ if __name__ == "__main__":
         audio_file = (
             WHISPER_DIR /
             f"window_{i:03d}.wav"
-        )
-
-        # JSON 前缀
-        output_prefix = (
-            WHISPER_DIR /
-            f"window_{i:03d}"
         )
 
         # 提取音频
@@ -481,6 +558,13 @@ if __name__ == "__main__":
             f"[WHISPER_PROGRESS] "
             f"{i + 1}/{len(windows)}",
             flush=True
+        )
+
+    if skipped:
+        print()
+        print(
+            f"跳过 {skipped} 个上次已转录的窗口"
+            f"（共 {len(windows)} 个）"
         )
 
     # ---------------------

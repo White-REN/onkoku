@@ -89,7 +89,7 @@ BUNDLED = [
 
 
 _DEVICE_RE = re.compile(
-    r"^\s*(?:Vulkan|CUDA)\d+:\s*(.+?)\s*\((\d+)\s*MiB,\s*(\d+)\s*MiB free\)"
+    r"^\s*((?:Vulkan|CUDA)\d+):\s*(.+?)\s*\((\d+)\s*MiB,\s*(\d+)\s*MiB free\)"
 )
 
 
@@ -98,6 +98,9 @@ def detect_device(timeout=15):
 
     比查 WMI 靠谱：WMI 的 AdapterRAM 在 4GB 处就截断，也拿不到实际可用显存；
     这里用的是我们真正做推理的同一个运行时，结果就是真实可用值。
+
+    返回值里的 ``id``（Vulkan0 / CUDA0）可以直接喂给 llama-server 的
+    ``--device``，所以调度层不用再猜设备名。
     """
     exe = paths.LLAMA_EXE
     if not exe.exists():
@@ -122,12 +125,13 @@ def detect_device(timeout=15):
         if not match:
             continue
 
-        total_mib = int(match.group(2))
+        total_mib = int(match.group(3))
         if best is None or total_mib > best["total_mib"]:
             best = {
-                "name": match.group(1).strip(),
+                "id": match.group(1),
+                "name": match.group(2).strip(),
                 "total_mib": total_mib,
-                "free_mib": int(match.group(3)),
+                "free_mib": int(match.group(4)),
                 "total_gb": round(total_mib / 1024, 1),
             }
 

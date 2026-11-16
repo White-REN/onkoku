@@ -1,28 +1,28 @@
-; Subtitle Tool - Inno Setup 6 安装脚本
+; Onkoku - Inno Setup 6 安装脚本
 ;
 ; 打包前先跑 PyInstaller：
-;   python -m PyInstaller --noconfirm --clean subtitle-tool.spec
+;   python -m PyInstaller --noconfirm --clean onkoku.spec
 ;
 ; 再编译本脚本：
-;   "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\subtitle-tool.iss
+;   "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\onkoku.iss
 ;
 ; 安装内容：
 ;   {app}                     程序本体（PyInstaller onedir 产物）
 ;   {app}\runtime             ffmpeg / llama-server / whisper-cli
 ;   {app}\models              whisper 语音识别模型 + silero VAD
 ; 不包含翻译模型（约 4.3GB），首次启动时由程序下载到
-;   %LOCALAPPDATA%\SubtitleTool\models
+;   %LOCALAPPDATA%\Onkoku\models
 
-#define AppName        "Subtitle Tool"
-#define AppVersion     "1.1.0"
+#define AppName        "Onkoku"
+#define AppVersion     "1.2.0"
 #define AppPublisher   "REN"
-#define AppExeName     "SubtitleTool.exe"
-#define AppId          "{{7C4E2B18-9D3A-4F62-8E15-2B7A6C0D9F31}"
+#define AppExeName     "Onkoku.exe"
+#define AppId          "{{95B3E7CD-7ED5-482C-8335-C82372B5DC29}"
 
 ; 下面三个路径按需覆盖，例如：
-;   ISCC.exe /DDistDir=D:\build\SubtitleTool /DRuntimeSrc=D:\runtime subtitle-tool.iss
+;   ISCC.exe /DDistDir=D:\build\Onkoku /DRuntimeSrc=D:\runtime onkoku.iss
 #ifndef DistDir
-  #define DistDir    "..\dist\SubtitleTool"
+  #define DistDir    "..\dist\Onkoku"
 #endif
 #ifndef RuntimeSrc
   #define RuntimeSrc "..\runtime"
@@ -38,7 +38,7 @@ AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
 AppPublisher={#AppPublisher}
-DefaultDirName={localappdata}\Programs\SubtitleTool
+DefaultDirName={localappdata}\Programs\Onkoku
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 
@@ -51,7 +51,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
 
 OutputDir=output
-OutputBaseFilename=SubtitleTool-{#AppVersion}-Setup
+OutputBaseFilename=Onkoku-{#AppVersion}-Setup
 SetupIconFile=app.ico
 UninstallDisplayIcon={app}\{#AppExeName}
 UninstallDisplayName={#AppName}
@@ -101,6 +101,21 @@ Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchProgram,{#AppName}}"; F
 
 
 [Code]
+{ 升级时 exe 路径不变、只是被覆盖，Windows 的图标缓存不会自动失效——桌面和
+  开始菜单会一直显示旧图标，得手动刷缓存才变。装完主动通知 shell 重读一次。 }
+procedure SHChangeNotify(wEventId: LongInt; uFlags: Cardinal;
+  dwItem1, dwItem2: Cardinal);
+  external 'SHChangeNotify@shell32.dll stdcall';
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep <> ssPostInstall then
+    Exit;
+
+  { SHCNE_ASSOCCHANGED + SHCNF_IDLIST }
+  SHChangeNotify($08000000, $0000, 0, 0);
+end;
+
 { 卸载时问一句要不要连翻译模型一起删掉——那是用户自己下载的，删了要重下 4.6GB }
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
@@ -109,7 +124,7 @@ begin
   if CurUninstallStep <> usPostUninstall then
     Exit;
 
-  DataDir := ExpandConstant('{localappdata}\SubtitleTool');
+  DataDir := ExpandConstant('{localappdata}\Onkoku');
   if not DirExists(DataDir) then
     Exit;
 

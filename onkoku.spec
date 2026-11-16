@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 """PyInstaller 打包配置。
 
-产物是 onedir（SubtitleTool/ 目录），不是 onefile：
+产物是 onedir（Onkoku/ 目录），不是 onefile：
 启动快 1~2 秒，也不会被杀软反复扫描解压。
 
 设置环境变量 ST_CONSOLE=1 可以打一个带控制台的调试版本。
@@ -105,7 +105,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="SubtitleTool",
+    name="Onkoku",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -114,7 +114,9 @@ exe = EXE(
     # 子进程崩了不要再弹一个 PyInstaller 的 traceback 窗口——它会把堆栈写到
     # stderr，被父进程捕获后显示在界面日志区，用户只需要看一句人话。
     disable_windowed_traceback=True,
-    icon="assets/logo.png",
+    # 直接用多尺寸 .ico，别让 PyInstaller 在打包时拿 PIL 现转 png——
+    # 那样小尺寸是临时插值出来的，且 PIL 本来就在 excludes 里。
+    icon="installer/app.ico",
 )
 
 coll = COLLECT(
@@ -124,5 +126,5 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name="SubtitleTool",
+    name="Onkoku",
 )

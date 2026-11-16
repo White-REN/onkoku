@@ -1,6 +1,6 @@
-# Subtitle Tool
+# Onkoku（音刻）
 
-给视频生成日语字幕，再把日语字幕翻译成中文。全程本地跑，不联网。
+把声音刻成字。给视频生成日语字幕，再把日语字幕翻译成中文。全程本地跑，不联网。
 
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue.svg)
 
@@ -23,7 +23,7 @@
 
 ## 安装
 
-从 [Releases](../../releases) 下载 `SubtitleTool-x.y.z-Setup.exe`，双击安装。安装包 1.45GB，里面已经带了语音识别模型，装完就能做日语字幕。
+从 [Releases](../../releases) 下载 `Onkoku-x.y.z-Setup.exe`，双击安装。安装包 1.45GB，里面已经带了语音识别模型，装完就能做日语字幕。
 
 首次打开如果没装翻译模型，会弹一个选择框，按显存推荐一档，点下载即可。
 
@@ -53,7 +53,7 @@
 **想自己准备模型**：任何 `.gguf` 文件丢进下面这个目录，程序会自动识别。
 
 ```
-%LOCALAPPDATA%\SubtitleTool\models
+%LOCALAPPDATA%\Onkoku\models
 ```
 
 字幕翻译页的模型下拉框里有「下载 / 更换模型…」，随时可以换。
@@ -87,7 +87,7 @@ runtime/
 - ffmpeg：[BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds/releases) 的 `win64-lgpl` 版本（见下方「许可」说明）
 - llama.cpp / whisper.cpp：各自 GitHub Releases 的 Windows x64 预编译包
 
-`build.py` 找不到 `runtime/` 时会退回 `%LOCALAPPDATA%\SubtitleTool\runtime`（已安装程序的运行时），也可以用 `--runtime <路径>` 指定。
+`build.py` 找不到 `runtime/` 时会退回 `%LOCALAPPDATA%\Onkoku\runtime`（已安装程序的运行时），也可以用 `--runtime <路径>` 指定。
 
 ### `models/`
 
@@ -119,7 +119,7 @@ build.py          一键打包
 installer/        Inno Setup 脚本
 ```
 
-打包后的流水线脚本是以数据文件形式随包分发的，由 `app.py --internal-run <脚本>` 用 `runpy` 执行。这意味着 PyInstaller 不会分析它们的依赖，`subtitle-tool.spec` 里用 `ast` 扫描脚本的 import 自动生成 `hiddenimports`。
+打包后的流水线脚本是以数据文件形式随包分发的，由 `app.py --internal-run <脚本>` 用 `runpy` 执行。这意味着 PyInstaller 不会分析它们的依赖，`onkoku.spec` 里用 `ast` 扫描脚本的 import 自动生成 `hiddenimports`。
 
 ## 第三方组件
 
@@ -163,3 +163,5 @@ GPL 要求分发二进制时能获取到对应组件的源码，各组件出处�
 **杀软报毒** — PyInstaller 打包的程序常被误报，加信任即可。
 
 **翻译很慢** — 说明在用 CPU。到「字幕翻译」页换成更小的模型档位（1.8B），或者确认显卡驱动支持 Vulkan。
+
+**升级后桌面图标还是旧的** — Windows 图标缓存没失效。覆盖安装时 exe 路径没变，shell 会继续用缓存里的旧图标。命令行跑一次 `ie4uinit.exe -show` 即可；1.1.0 之后的安装包在装完时会自动通知 shell 刷新，不会再有这个问题。

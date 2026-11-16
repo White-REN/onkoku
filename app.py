@@ -1,4 +1,4 @@
-"""Subtitle Tool 统一入口。
+"""Onkoku 统一入口。
 
 正常启动 GUI；带 ``--internal-run <脚本>`` 时以子进程方式执行流水线的某个
 步骤（transcribe / srt_builder / mux / translate / main）。
@@ -94,7 +94,7 @@ def main():
 
         import gui
 
-        gui.SubtitleTool().mainloop()
+        gui.Onkoku().mainloop()
         return 0
 
     except SystemExit:

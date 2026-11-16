@@ -8,8 +8,8 @@
     python build.py --iscc D:\\ISCC.exe
 
 产物：
-    dist/SubtitleTool/                     程序本体
-    installer/output/SubtitleTool-x.y.z-Setup.exe
+    dist/Onkoku/                           程序本体
+    installer/output/Onkoku-x.y.z-Setup.exe
 """
 
 import argparse
@@ -21,9 +21,9 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-SPEC = ROOT / "subtitle-tool.spec"
-DIST = ROOT / "dist" / "SubtitleTool"
-ISS = ROOT / "installer" / "subtitle-tool.iss"
+SPEC = ROOT / "onkoku.spec"
+DIST = ROOT / "dist" / "Onkoku"
+ISS = ROOT / "installer" / "onkoku.iss"
 RUNTIME = ROOT / "runtime"
 MODELS = ROOT / "models"
 OUTPUT_DIR = ROOT / "installer" / "output"
@@ -60,7 +60,7 @@ def find_iscc(explicit=None):
 def resolve_runtime(explicit=None):
     r"""找到 runtime/（ffmpeg + llama + whisper）。
 
-    优先项目根目录；开发机上它通常在 %LOCALAPPDATA%\SubtitleTool\runtime，
+    优先项目根目录；开发机上它通常在 %LOCALAPPDATA%\Onkoku\runtime，
     那就退回那里，免得每次都要拷一份。
     """
     if explicit:
@@ -72,10 +72,12 @@ def resolve_runtime(explicit=None):
     if RUNTIME.is_dir():
         return RUNTIME
 
-    fallback = Path(os.environ.get("LOCALAPPDATA", "")) / "SubtitleTool" / "runtime"
-    if fallback.is_dir():
-        log(f"项目里没有 runtime/，改用 {fallback}")
-        return fallback
+    # 开发机上运行库通常放在用户目录；1.2.0 改名后新目录优先，旧目录兜底
+    for name in ("Onkoku", "SubtitleTool"):
+        fallback = Path(os.environ.get("LOCALAPPDATA", "")) / name / "runtime"
+        if fallback.is_dir():
+            log(f"项目里没有 runtime/，改用 {fallback}")
+            return fallback
 
     raise SystemExit(
         "找不到 runtime/（ffmpeg / llama / whisper）。\n"
@@ -118,7 +120,7 @@ def clean_dist():
     except OSError as exc:
         raise SystemExit(
             f"既删不掉也改不了名：{DIST}\n"
-            f"请先关闭正在运行的 SubtitleTool.exe 再试。\n（{exc}）"
+            f"请先关闭正在运行的 Onkoku.exe 再试。\n（{exc}）"
         )
 
 
@@ -177,7 +179,7 @@ def build_installer(iscc=None, runtime_src=None):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="打包 Subtitle Tool")
+    parser = argparse.ArgumentParser(description="打包 Onkoku")
     parser.add_argument("--app-only", action="store_true", help="只打程序，不编译安装包")
     parser.add_argument("--console", action="store_true", help="打带控制台的调试版")
     parser.add_argument("--iscc", help="ISCC.exe 路径")

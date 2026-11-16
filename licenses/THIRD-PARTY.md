@@ -1,6 +1,6 @@
 # 第三方组件
 
-本程序（Subtitle Tool）以 GNU General Public License v3.0 分发，许可证全文见程序目录下的 `LICENSE`。
+本程序（Onkoku）以 GNU General Public License v3.0 分发，许可证全文见程序目录下的 `LICENSE`。
 
 程序内嵌了以下第三方组件，各自的版权与许可如下。
 

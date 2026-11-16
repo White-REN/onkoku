@@ -6,10 +6,11 @@
 2. 打包运行：PyInstaller 产出的 exe，脚本以数据文件形式随包分发。
 
 两者的区别只有「只读资源在哪」和「怎么拉起子进程」，其余路径一律指向
-``%LOCALAPPDATA%\\SubtitleTool``，保证装到 Program Files 之后仍然可写。
+``%LOCALAPPDATA%\\Onkoku``，保证装到 Program Files 之后仍然可写。
 """
 
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -34,7 +35,10 @@ else:
 # 可写数据目录
 # ------------------------------------------------------------
 
-APP_DATA = Path.home() / "AppData" / "Local" / "SubtitleTool"
+APP_DATA = Path.home() / "AppData" / "Local" / "Onkoku"
+
+# 1.2.0 之前叫 Subtitle Tool，用户数据（含 4.6GB 翻译模型）都在这个目录下
+LEGACY_APP_DATA = Path.home() / "AppData" / "Local" / "SubtitleTool"
 
 # 运行库（ffmpeg / llama / whisper）随安装包分发，优先用程序目录里的；
 # 开发环境下程序目录没有 runtime/，自动回落到 %LOCALAPPDATA%。
@@ -80,8 +84,42 @@ PIPELINE_SCRIPTS = (
 )
 
 
+def migrate_data_dir():
+    """把旧版（Subtitle Tool）的用户数据搬到 Onkoku 下。
+
+    翻译模型 4.6GB，重下代价太大，所以优先整目录改名——同一个卷上是瞬时的。
+    跨卷 / 被占用时退回逐项复制，已经存在的文件不覆盖。
+    """
+    if APP_DATA.exists() or not LEGACY_APP_DATA.exists():
+        return
+
+    try:
+        LEGACY_APP_DATA.rename(APP_DATA)
+        return
+    except OSError:
+        pass
+
+    try:
+        APP_DATA.mkdir(parents=True, exist_ok=True)
+
+        for item in LEGACY_APP_DATA.iterdir():
+            target = APP_DATA / item.name
+
+            if target.exists():
+                continue
+
+            if item.is_dir():
+                shutil.copytree(item, target, dirs_exist_ok=True)
+            else:
+                shutil.copy2(item, target)
+    except OSError:
+        pass
+
+
 def ensure_dirs():
     """启动时把可写目录补齐。"""
+    migrate_data_dir()
+
     for path in (APP_DATA, TEMP_DIR, USER_MODEL_DIR):
         try:
             path.mkdir(parents=True, exist_ok=True)
@@ -104,6 +142,27 @@ def quiet_flags():
     if os.name != "nt":
         return 0
     return getattr(subprocess, "CREATE_NO_WINDOW", CREATE_NO_WINDOW)
+
+
+def kill_tree(pid):
+    """连子进程一起杀掉。
+
+    llama-server / whisper-cli / ffmpeg 都是 main.py 的孙进程。只 terminate
+    父进程的话它们会变成孤儿：翻译引擎不退出，4.6GB 模型就一直占着显存，
+    下次启动要么抢不到显存要么撞端口。taskkill /T 按进程树收，Windows 上
+    这是最省事也最可靠的办法。
+    """
+    if not pid or os.name != "nt":
+        return
+
+    try:
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(pid)],
+            capture_output=True,
+            creationflags=quiet_flags(),
+        )
+    except OSError:
+        pass
 
 
 def script_command(script, *args):
